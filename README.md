@@ -1,1 +1,1 @@
-# p8106_hw1
+This is the repository for P8106 HW1.
