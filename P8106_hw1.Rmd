@@ -10,9 +10,79 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 ```{r}
 library(tidyverse)
+library(glmnet)
 ```
 
 ## Import the training data and test data
+```{r}
+train <- read.csv("data/housing_training.csv") %>% 
+  janitor::clean_names()
+train <- na.omit(train)
+    
+
+
+test <- read.csv("data/housing_test.csv") %>% 
+  janitor::clean_names()
+test <- na.omit(test)
+```
+
+## least squares
+```{r}
+fit_ls <- lm(sale_price ~ ., data = train)
+summary(fit_ls)
+```
+
+## Lasso 
+### Fit lasso model
+```{r}
+x <- model.matrix(sale_price ~ ., train)[ ,-1]
+y <- train$sale_price
+fit_lasso <- glmnet(x = x,
+                    y = y,
+                    standardize = TRUE,
+                    alpha = 1,
+                    lambda = exp(seq(5, -1, length = 100)))
+
+
+mat.coef <- coef(fit_lasso)
+dim(mat.coef)
+```
+
+### Cross-validation for lasso
+```{r}
+set.seed(1234)
+cv.lasso <- cv.glmnet(x, y,
+                      alpha = 1, 
+                      lambda = exp(seq(7, -1, length = 100)))
+
+plot(cv.lasso)#cv curve
+abline(h = (cv.lasso$cvm + cv.lasso$cvsd)[which.min(cv.lasso$cvm)], col = 4, lwd = 2)
+
+
+cv.lasso$lambda.min
+cv.lasso$lambda.1se
+```
+
+### Coefficients of the final lasso model
+```{r}
+coef = predict(cv.lasso, s = cv.lasso$lambda.1se, type = "coefficients")
+num_pred = length(which(coef != 0)) - 1
+```
+There are `r num_pred` predictors in this model. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```{r}
 train <- read.csv("data/housing_training.csv") %>% 
   janitor::clean_names() %>% 
@@ -48,19 +118,5 @@ test <- read.csv("data/housing_test.csv") %>%
                         levels = c("Excellent", "Good", "Typical", "Fair", "Poor"),
                         labels = c("0", "1", "2", "3", "4")))
 ```
-
-## least squares
-```{r}
-fit_ls <- lm(sale_price ~ ., data = train)
-summary(fit_ls)
-```
-
-## Lasso 
-```{r}
-
-```
-
-
-
 
 
