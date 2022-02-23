@@ -6,7 +6,6 @@ output: github_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
-library("knitr")
 ```
 
 ```{r}
@@ -34,24 +33,31 @@ test <- na.omit(test)
 ## Least squares
 We first fit a linear model on the training data using least squares and cross-validation.
 ```{r, warning = FALSE, message=FALSE, error=FALSE}
-ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+ctrl1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
 x <- model.matrix(sale_price ~ ., train)[ ,-1]
 y <- train$sale_price
+x_test <- model.matrix(sale_price ~ ., test)[ ,-1]
+y_test <- test$sale_price
 
 set.seed(1234)
-fit_lm <- train(x, y, 
+fit.lm <- train(x, y, 
              method = "lm",
-             trControl = ctrl)
-summary(fit_lm)
+             trControl = ctrl1)
+summary(fit.lm)
+
+#make predictions
+fit_lm_pred <- predict(fit.lm, newdata = x_test)
+#test error
+mean((fit_lm_pred - y_test)^2)
 
 #correlation plot
-#corrplot(cor(x), 
-         #method = "circle", 
-         #type = "full",
-         #tl.cex = 0.5)
+corrplot::corrplot(cor(x), 
+         method = "circle", 
+         type = "full",
+         tl.cex = 0.5)
 ```
-The least squares linear model is easy to fit, and the least squares estimates are BLUE. However, correlations amongst predictors can cause problems. From the above correlation plot, we can see that some predictors are highly correlated with each other, for example, `garage_area` and `garage_cars`. Due to multicollinearity, the variance of coefficients tends to increase and interpretations would be difficult. 
 
+The least squares linear model is easy to fit, and the least squares estimates are BLUE. However, correlations amongst predictors can cause problems. From the above correlation plot, we can see that some predictors are highly correlated with each other, for example, `garage_area` and `garage_cars`. Due to multicollinearity, the variance of coefficients tends to increase and interpretations would be difficult. 
 
 We then did a best subset model selection, the predictors selected to give the smallest BIC are `gr_liv_area`, `total_bsmt_sf`, `mas_vnr_area`, `tot_rms_abv_grd`, `overall_qualFair`, `overall_qualVery_Excellent`, `overall_qualVery_Good`, `kitcehn_qualFair`and `longitude`.
 ```{r}
@@ -62,152 +68,105 @@ regsubsetsObj <- regsubsets(sale_price ~ .,
 plot(regsubsetsObj, scale = "bic")
 ```
 
-## Lasso 
-### Fit lasso model
-```{r}
-fit_lasso <- glmnet(x = x,
-                    y = y,
-                    standardize = TRUE,
-                    alpha = 1,
-                    lambda = exp(seq(5, -1, length = 100)))
+## Lasso
 
-
-plot_glmnet(fit_lasso, xvar = "rlambda", label = 19)
-```
-
-### Cross-validation for lasso
 ```{r}
 set.seed(1234)
-cv.lasso <- cv.glmnet(x, y,
-                      alpha = 1, 
-                      lambda = exp(seq(7, -1, length = 100)))
-
-
-plot(cv.lasso)#cv curve
-abline(h = (cv.lasso$cvm + cv.lasso$cvsd)[which.min(cv.lasso$cvm)], col = 4, lwd = 2)
-
-#min CV MSE
-cv.lasso$lambda.min
-#1SE rule
-cv.lasso$lambda.1se
-
-#make prediction
-x_test <- model.matrix(sale_price ~ ., test)[ ,-1]
-y_test <- test$sale_price
-lasso_pred_min <- predict(cv.lasso, newx = x_test, s = "lambda.min", type = "response")
-lasso_pred_1se <- predict(cv.lasso, newx = x_test, s = "lambda.1se", type = "response")
-#test error
-mean((lasso_pred_min - y_test)^2)#min MSE
-mean((lasso_pred_1se - y_test)^2)#1SE rule
-```
-By performing cross-validation for the lasso model, the lambda with the minimal MSE is `r cv.lasso$lambda.min`, and the lambda with 1SE rule is `r cv.lasso$lambda.1se`. The model with lambda.min gives a test error, `r mean((lasso_pred_min - y_test)^2)`, and the model with lambda.1se gives a test error, `r mean((lasso_pred_1se - y_test)^2)` which is smaller, so 1 SE rule may be applied in this model. 
-
-### Coefficients of the final lasso model
-```{r}
-coef = predict(cv.lasso, s = cv.lasso$lambda.1se, type = "coefficients")
-coef
-num_pred = length(which(coef != 0)) - 1
-num_pred
-```
-When 1SE rule is applied, `r num_pred` predictors are included in this model. The coefficients of predictors are shown above. 
-
-### Lasso using `caret`.
-```{r}
-set.seed(1234)
-lasso.fit <- train(x, y,
+#lasso model with min mse
+lasso.fit.min <- train(x, y,
                    method = "glmnet",
                    tuneGrid = expand.grid(alpha = 1, 
                                           lambda = exp(seq(6, -1, length = 100))),
-                   trControl = ctrl)
-plot(lasso.fit, xTrans = log)
+                   trControl = ctrl1)
+plot(lasso.fit.min, xTrans = log)
 #optimal tuning parameters
-lasso.fit$bestTune
+lasso.fit.min$bestTune
+#test error
+lasso_pred_min <- predict(lasso.fit.min, newdata = x_test)
+mean((lasso_pred_min - y_test)^2)
 #coefficients
-coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
+coef(lasso.fit.min$finalModel, lasso.fit.min$bestTune$lambda)
+
+#lasso model applying 1SE
+ctrl2 <- trainControl(method = "cv", selectionFunction = "oneSE")
+set.seed(1234)
+lasso.fit.1se <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1, 
+                                          lambda = exp(seq(6, -1, length = 100))),
+                   trControl = ctrl2)
+plot(lasso.fit.1se, xTrans = log)
+#optimal tuning parameters
+lasso.fit.1se$bestTune
+#test error
+lasso_pred_1se <- predict(lasso.fit.1se, newdata = x_test)
+mean((lasso_pred_1se - y_test)^2)
+#coefficients
+coeff <- coef(lasso.fit.1se$finalModel, lasso.fit.1se$bestTune$lambda)
+num_pred = length(which(coeff != 0)) - 1
+num_pred
 ```
 
+By fitting lasso models, the lambda with the minimal MSE is `r lasso.fit.min$bestTune$lambda`, and the lambda with 1SE rule is `r lasso.fit.1se$bestTune$lambda`. The model with lambda.min gives a test error, `r mean((lasso_pred_min - y_test)^2)`, and the model with lambda.1se gives a test error, `r mean((lasso_pred_1se - y_test)^2)` which is smaller, so 1 SE rule may be applied in this model. When 1SE rule is applied, `r num_pred` predictors are included in this model. The coefficients of predictors are shown above. 
 
 ## Elastic net
 ### Fit elastic net model
 ```{r}
 set.seed(1234)
-fit_enet <- train(x, y,
+fit.enet <- train(x, y,
                   method = "glmnet",
                   tuneGrid = expand.grid(alpha = seq(0, 1, length = 21),
                                          lambda = exp(seq(8, -2, length = 50))),
-                  trControl = ctrl)
+                  trControl = ctrl1)
 #best tuning parameters
-fit_enet$bestTune
+fit.enet$bestTune
 
 myCol <- rainbow(25)
 myPar <- list(superpose.symbol = list(col = myCol),
                     superpose.line = list(col = myCol))
 #plot of RMSE vs lambda
-plot(fit_enet, par.settings = myPar)
-```
-The optimal tuning parameters are selected to be alpha = `r fit_enet$bestTune[1]` and lambda = `r fit_enet$bestTune[2]`. 
-
-### Make predictions
-```{r}
-enet_pred <- predict(fit_enet, newdata = x_test)
+plot(fit.enet, par.settings = myPar)
+#make predictions
+enet_pred <- predict(fit.enet, newdata = x_test)
 #test error
 mean((enet_pred - y_test)^2)
-coef(fit_enet$finalModel, fit_enet$bestTune$lambda)
+coef(fit.enet$finalModel, fit.enet$bestTune$lambda)
 ```
-The test error of this elastic net model is `r mean((enet_pred - y_test)^2)`. The coefficients of this model are shown above. 
+The optimal tuning parameters are selected to be alpha = `r fit.enet$bestTune[1]` and lambda = `r fit.enet$bestTune[2]`. The test error of this elastic net model is `r mean((enet_pred - y_test)^2)`. The coefficients of this model are shown above. 
 
 ## Partial least squares
-### Fit partial least squares mode
-```{r}
-set.seed(1234)
-fit_pls <- plsr(sale_price ~ .,
-                data = train,
-                scale = TRUE,
-                validation = "CV")
-summary(fit_pls)
-#plot of MSEP vs number of components
-validationplot(fit_pls, val.type = "MSEP", legendpos = "topright")
-#rmse of prediction
-cv.mse <- RMSEP(fit_pls)
-#number of components with the least rmsep
-ncomp.cv <- which.min(cv.mse$val[1,,]) - 1
-ncomp.cv
-#make predictions
-pls_pred <- predict(fit_pls, newdata = x_test, ncomp = ncomp.cv)
-#test error
-mean((pls_pred - y_test)^2)
-```
-8 components are included in this pls model which give the least cv rmsep. And the test error of this model is `r mean((pls_pred - y_test)^2)`.
-
-### PLS using `caret`
 
 ```{r}
 set.seed(1234)
 pls.fit <- train(x, y,
                  method = "pls",
                  tuneGrid  = data.frame(ncomp = 1:19),
-                 trControl = ctrl,
+                 trControl = ctrl1,
                  preProcess = c("center", "scale"))
 
 
 ggplot(pls.fit, highlight = TRUE) +
-  scale_x_continuous(breaks = seq(0,20,1))#the number of components with the least RMSE is still 8
+  scale_x_continuous(breaks = seq(0,20,1))
+
+#make predictions
+pls_pred <- predict(pls.fit, newdata = x_test)
+#test error
+mean((pls_pred - y_test)^2)
 ```
+
+Based on the plot, 8 components are included in this pls model which gives the least cv rmsep. And the test error of this model is `r mean((pls_pred - y_test)^2)`.
+
 
 ## Model comparison
 
 ```{r, warning=FALSE}
 set.seed(1234)
-resamp <- resamples(list(lm = fit_lm, lasso = lasso.fit, enet = fit_enet, pls = pls.fit))
+resamp <- resamples(list(lm = fit.lm, lasso = lasso.fit.min, enet = fit.enet, pls = pls.fit))
 summary(resamp)
 bwplot(resamp, metric = "RMSE")
 ```
 
-
-
-
-
-
+By comparing the mean RMSE, elastic net model and partial least squares model have the smallest mean RMSE. Since the elastic net model includes all the predictors, violating the principle of parsimony. Therefore, I would choose the partial least squares model to be the best one predicting the response. 
 
 
 
